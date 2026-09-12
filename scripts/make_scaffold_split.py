@@ -94,30 +94,17 @@ def _smiles_to_sample(smiles: str, label: list[float], seed: int):
 
     Returns None (with a warning) if embedding fails, so the caller can
     skip the molecule without breaking index alignment.
+
+    Delegates the actual RDKit embedding to `edcl.featurize.smiles_to_atoms`
+    (shared with `scripts/predict.py` so the two paths cannot drift apart).
     """
-    from rdkit import Chem
-    from rdkit.Chem import AllChem
+    from edcl.featurize import smiles_to_atoms
 
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        warnings.warn(f"Could not parse SMILES, skipping: {smiles!r}")
+    atoms = smiles_to_atoms(smiles, seed=seed)
+    if atoms is None:
         return None
-    mol = Chem.AddHs(mol)
-    params = AllChem.ETKDGv3()
-    params.randomSeed = seed
-    if AllChem.EmbedMolecule(mol, params) != 0:
-        warnings.warn(f"3-D embedding failed, skipping: {smiles!r}")
-        return None
-    try:
-        AllChem.MMFFOptimizeMolecule(mol)
-    except Exception:
-        pass  # optimization is best-effort; unoptimized embedding is still valid
-
-    conf = mol.GetConformer()
-    z = torch.tensor([atom.GetAtomicNum() for atom in mol.GetAtoms()], dtype=torch.long)
-    pos = torch.tensor(conf.GetPositions(), dtype=torch.float32)
-    y = torch.tensor(label, dtype=torch.float32)
-    return {"z": z, "pos": pos, "y": y}
+    atoms["y"] = torch.tensor(label, dtype=torch.float32)
+    return atoms
 
 
 def main(argv=None) -> int:

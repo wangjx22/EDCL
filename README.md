@@ -57,6 +57,22 @@ the best validation checkpoint at the end of training — see
 ["Feeding a scaffold split into train_finetune.py"](docs/data.md#feeding-a-scaffold-split-into-train_finetunepy)
 in `docs/data.md` for the full config.
 
+## Predicting on new molecules
+
+`train_finetune.py` saves a **self-describing** checkpoint (`best.pt`):
+weights + the exact encoder/head architecture needed to reconstruct the
+model, so you can run inference later without the original YAML config.
+
+```bash
+python scripts/predict.py --checkpoint runs/finetune/best.pt \
+    --input new_molecules.csv --smiles_col smiles --output predictions.csv
+```
+
+The input CSV needs one SMILES column (default name `smiles`); any other
+columns (e.g. an `id`) are passed through unchanged. SMILES that fail to
+parse/embed are logged as a warning and get blank prediction columns
+instead of crashing the whole run.
+
 ## Run tests
 
 ```bash
@@ -79,7 +95,7 @@ src/edcl/
   metrics.py          masked MSE/BCE losses (NaN-safe multi-label) + MAE/RMSE/ROC-AUC metrics
   data.py             validated .pt loading, MoleculeBatch, collation, synthetic fixture
 tests/                pytest suite (unit + integration; run `pytest -q` for current count)
-scripts/              train_pretrain.py, train_finetune.py (CLI)
+scripts/              train_pretrain.py, train_finetune.py, make_scaffold_split.py, predict.py (CLI)
 configs/              pretrain.yaml, finetune.yaml
 docs/                 data contract and paper equation traceability
 ```

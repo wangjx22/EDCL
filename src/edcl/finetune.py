@@ -24,6 +24,8 @@ class EDCLFinetuneModel(nn.Module):
         self.encoder = encoder
         self.task_head = TaskHead(encoder.hidden_dim, num_targets=num_targets, hidden=hidden)
         self.task_type = task_type
+        self.num_targets = num_targets
+        self.head_hidden = hidden
 
     @classmethod
     def from_pretrained(
@@ -56,3 +58,42 @@ class EDCLFinetuneModel(nn.Module):
     def forward(self, z: torch.Tensor, pos: torch.Tensor, batch: torch.Tensor):
         out = self.encoder(z, pos, batch)
         return self.task_head(out.h_graph)
+
+    def save_checkpoint(self, path: str) -> None:
+        """Save a SELF-DESCRIBING checkpoint: the state dict plus every
+        constructor argument needed to reconstruct an identical model
+        (encoder architecture + head size + task type), so
+        ``load_checkpoint`` never requires the caller to separately track
+        or guess those hyperparameters (as the pretraining checkpoint
+        format already does via ``encoder_config``). This is what
+        ``scripts/train_finetune.py`` writes to ``best.pt`` and what
+        ``scripts/predict.py`` consumes.
+        """
+        torch.save(
+            {
+                "model_state_dict": self.state_dict(),
+                "encoder_config": self.encoder.encoder_config,
+                "num_targets": self.num_targets,
+                "hidden": self.head_hidden,
+                "task_type": self.task_type,
+            },
+            path,
+        )
+
+    @classmethod
+    def load_checkpoint(cls, path: str, map_location="cpu") -> "EDCLFinetuneModel":
+        """Load a checkpoint written by ``save_checkpoint`` (self-describing:
+        no need to pass encoder/head hyperparameters separately)."""
+        ckpt = torch.load(path, map_location=map_location, weights_only=True)
+        missing = [k for k in ("model_state_dict", "encoder_config", "num_targets", "hidden", "task_type") if k not in ckpt]
+        if missing:
+            raise KeyError(
+                f"{path!r} is missing key(s) {missing} — it does not look like a checkpoint "
+                "written by EDCLFinetuneModel.save_checkpoint (e.g. it may be an older "
+                "bare state_dict from a previous version of train_finetune.py). "
+                "Re-run fine-tuning to produce a self-describing checkpoint."
+            )
+        encoder = EquivariantEncoder(**ckpt["encoder_config"])
+        model = cls(encoder, num_targets=ckpt["num_targets"], hidden=ckpt["hidden"], task_type=ckpt["task_type"])
+        model.load_state_dict(ckpt["model_state_dict"])
+        return model

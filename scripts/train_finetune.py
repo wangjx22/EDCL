@@ -195,7 +195,7 @@ def main():
 
         if metrics["loss"] < best_val:
             best_val = metrics["loss"]
-            torch.save(model.state_dict(), best_path)
+            model.save_checkpoint(best_path)
             print(f"new best val_loss={best_val:.4f}, checkpoint saved")
 
     if test_loader is not None:
@@ -203,7 +203,7 @@ def main():
         # held-out (scaffold-disjoint) test set, matching the paper's
         # evaluation protocol.
         if os.path.exists(best_path):
-            model.load_state_dict(torch.load(best_path, map_location=device, weights_only=True))
+            model = EDCLFinetuneModel.load_checkpoint(best_path, map_location=device).to(device)
             print(f"reloaded best checkpoint from {best_path} for test evaluation")
         test_metrics = evaluate(model, test_loader, loss_fn, task_type, device)
         if task_type == "binary_classification":

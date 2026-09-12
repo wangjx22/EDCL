@@ -123,6 +123,15 @@ class EquivariantEncoder(nn.Module):
         super().__init__()
         dim = hidden_dim
         self.hidden_dim = hidden_dim
+        # Remember the exact constructor kwargs so callers (e.g.
+        # EDCLFinetuneModel.save_checkpoint) can serialize enough metadata to
+        # reconstruct an identical encoder at load time without the caller
+        # having to separately track/pass these values.
+        self.encoder_config = dict(
+            num_elements=num_elements, hidden_dim=hidden_dim, num_layers=num_layers,
+            num_rbf=num_rbf, cutoff=cutoff, max_neighbors=max_neighbors,
+            dropout=dropout, drop_path_max=drop_path_max,
+        )
         self.embedding = nn.Embedding(num_elements, dim)
         drop_path_rates = (
             [drop_path_max * i / max(num_layers - 1, 1) for i in range(num_layers)]
