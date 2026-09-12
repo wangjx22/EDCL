@@ -7,7 +7,7 @@ name = "edcl"
 version = "0.1.0"
 description = "Dependency-light Equivariant Denoising Contrastive Learning"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = {file = "LICENSE"}
 dependencies = [
   "torch>=2.0",
