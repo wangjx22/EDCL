@@ -40,7 +40,7 @@ src/edcl/
   model.py            EDCLPretrainModel: dual-branch forward + combined loss (Eq. 17)
   finetune.py         EDCLFinetuneModel: pretrained encoder + task head
   data.py             validated .pt loading, MoleculeBatch, collation, synthetic fixture
-tests/                pytest suite (21 tests)
+tests/                pytest suite (unit + integration; run `pytest -q` for current count)
 scripts/              train_pretrain.py, train_finetune.py (CLI)
 configs/              pretrain.yaml, finetune.yaml
 docs/                 data contract and paper equation traceability
