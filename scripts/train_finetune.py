@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Fine-tuning CLI: loads a pretrained encoder checkpoint (from
+train_pretrain.py) and trains encoder + task head end-to-end for a
+downstream regression target.
+
+Usage:
+    python scripts/train_finetune.py --config configs/finetune.yaml
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+import torch
+import yaml
+from torch.utils.data import DataLoader, random_split
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+from edcl import EDCLFinetuneModel
+from edcl.data import SyntheticMoleculeDataset, collate_molecules
+
+
+def build_dataset(cfg: dict):
+    path = cfg["data"].get("path")
+    if path:
+        samples = torch.load(path)
+        class _Wrapped(torch.utils.data.Dataset):
+            def __len__(self):
+                return len(samples)
+
+            def __getitem__(self, idx):
+                return samples[idx]
+        return _Wrapped()
+    return SyntheticMoleculeDataset(
+        num_samples=cfg["data"].get("num_synthetic_samples", 256),
+        num_targets=cfg["data"].get("num_targets", 1),
+    )
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default="configs/finetune.yaml")
+    args = ap.parse_args()
+
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+
+    torch.manual_seed(cfg.get("seed", 42))
+    device = torch.device(cfg.get("device", "cpu"))
+
+    dataset = build_dataset(cfg)
+    val_frac = cfg["data"].get("val_fraction", 0.1)
+    n_val = max(1, int(len(dataset) * val_frac))
+    n_train = len(dataset) - n_val
+    train_ds, val_ds = random_split(dataset, [n_train, n_val])
+
+    bs = cfg["data"]["batch_size"]
+    train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True, collate_fn=collate_molecules)
+    val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False, collate_fn=collate_molecules)
+
+    num_targets = cfg["model"].get("num_targets", 1)
+    ckpt = cfg.get("pretrained_ckpt")
+    if ckpt and os.path.exists(ckpt):
+        model = EDCLFinetuneModel.from_pretrained(ckpt, num_targets=num_targets)
+        print(f"loaded pretrained encoder from {ckpt}")
+    else:
+        from edcl.backbone import EquivariantEncoder
+        encoder = EquivariantEncoder()
+        model = EDCLFinetuneModel(encoder, num_targets=num_targets)
+        print("WARNING: no pretrained checkpoint found, training encoder from scratch")
+    model = model.to(device)
+
+    tcfg = cfg["train"]
+    opt = torch.optim.AdamW(model.parameters(), lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
+    loss_fn = torch.nn.MSELoss()
+    os.makedirs(tcfg["ckpt_dir"], exist_ok=True)
+
+    step = 0
+    best_val = float("inf")
+    for epoch in range(tcfg["epochs"]):
+        model.train()
+        for mb in train_loader:
+            mb = mb.to(device)
+            pred = model(mb.z, mb.pos, mb.batch)
+            loss = loss_fn(pred, mb.y)
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg["grad_clip"])
+            opt.step()
+            if step % tcfg.get("log_every", 20) == 0:
+                print(f"epoch={epoch} step={step} train_loss={loss.item():.4f}")
+            step += 1
+
+        model.eval()
+        val_losses = []
+        with torch.no_grad():
+            for mb in val_loader:
+                mb = mb.to(device)
+                pred = model(mb.z, mb.pos, mb.batch)
+                val_losses.append(loss_fn(pred, mb.y).item())
+        val_loss = sum(val_losses) / max(1, len(val_losses))
+        print(f"epoch={epoch} val_loss={val_loss:.4f}")
+
+        if val_loss < best_val:
+            best_val = val_loss
+            torch.save(model.state_dict(), os.path.join(tcfg["ckpt_dir"], "best.pt"))
+            print(f"new best val_loss={val_loss:.4f}, checkpoint saved")
+
+
+if __name__ == "__main__":
+    main()

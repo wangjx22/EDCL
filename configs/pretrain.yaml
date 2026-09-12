@@ -1,0 +1,35 @@
+seed: 42
+device: cpu
+
+data:
+  # Path to a .pt file produced by scripts/prepare_data.py (list[dict] with
+  # keys z[int64 N], pos[float32 N,3]). If null, falls back to the synthetic
+  # dataset for smoke-testing the training loop end to end.
+  path: null
+  num_synthetic_samples: 512
+  batch_size: 32
+  num_workers: 0
+
+model:
+  num_elements: 119
+  hidden_dim: 128
+  num_layers: 4
+  cutoff: 5.0
+  max_neighbors: 32
+  omega: 0.1
+  r_min: 0.8
+  tau: 0.1
+
+weights:
+  alpha: 0.1     # contrastive
+  beta: 10.0     # energy
+  lam: 1.0       # KL
+
+train:
+  epochs: 100
+  lr: 3.0e-4
+  weight_decay: 1.0e-6
+  grad_clip: 5.0
+  log_every: 50
+  ckpt_dir: checkpoints/pretrain
+  ckpt_every_epoch: 10

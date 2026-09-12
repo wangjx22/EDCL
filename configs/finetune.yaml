@@ -1,0 +1,23 @@
+seed: 42
+device: cpu
+
+data:
+  path: null              # .pt file with list[dict(z,pos,y)]
+  num_synthetic_samples: 256
+  num_targets: 1
+  batch_size: 32
+  val_fraction: 0.1
+
+pretrained_ckpt: checkpoints/pretrain/last.pt   # from train_pretrain.py
+
+model:
+  num_targets: 1
+  hidden: 128
+
+train:
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-6
+  grad_clip: 5.0
+  log_every: 20
+  ckpt_dir: checkpoints/finetune
