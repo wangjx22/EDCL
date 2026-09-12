@@ -2,6 +2,19 @@ seed: 42
 device: cpu
 
 data:
+  # --- Paper-faithful mode (recommended): point these at the 3 files
+  # produced by `scripts/make_scaffold_split.py` (scaffold split, no
+  # re-shuffling). When both train_path and val_path are set, this mode
+  # is used and `path`/`val_fraction` below are ignored. If test_path is
+  # also set, a final held-out test evaluation is run and written to
+  # <train.ckpt_dir>/test_metrics.json. See docs/data.md.
+  train_path: null
+  val_path: null
+  test_path: null
+
+  # --- Legacy/smoke mode: single file (or null -> synthetic data) with an
+  # internal *random* train/val split. No test-set evaluation is produced
+  # in this mode. Used only when train_path/val_path above are not set.
   path: null              # validated .pt list[dict(z,pos,y)]; see docs/data.md
   num_synthetic_samples: 256
   batch_size: 32

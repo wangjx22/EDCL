@@ -66,3 +66,37 @@ The returned index lists can be used to slice your sample list before saving
 separate `train.pt`/`val.pt`/`test.pt` files. This function requires the
 optional `rdkit` dependency (`pip install rdkit`); it is not needed for
 QM9/QM7-style random splits or for the core `z`/`pos`/`y` training pipeline.
+
+`scripts/make_scaffold_split.py` wires the above together end to end: it
+reads a raw `smiles,label[,label2,...]` CSV, builds `z`/`pos`/`y` samples
+with RDKit-generated 3D conformers, applies `scaffold_split`, and writes
+`train.pt`/`val.pt`/`test.pt` to an output directory:
+
+```bash
+python scripts/make_scaffold_split.py --csv my_dataset.csv --out_dir data/my_dataset_split \
+    --frac_train 0.8 --frac_val 0.1 --frac_test 0.1
+```
+
+## Feeding a scaffold split into `train_finetune.py`
+
+Point `data.train_path` / `data.val_path` / `data.test_path` in
+`configs/finetune.yaml` at the three files above instead of the legacy
+single `data.path`:
+
+```yaml
+data:
+  train_path: data/my_dataset_split/train.pt
+  val_path: data/my_dataset_split/val.pt
+  test_path: data/my_dataset_split/test.pt   # optional; enables final test-set scoring
+  batch_size: 32
+```
+
+In this mode `train_finetune.py` uses the three files **verbatim** (no
+internal re-shuffling), so the scaffold separation from `make_scaffold_split.py`
+is preserved end to end. If `test_path` is set, once training finishes the
+best-on-validation checkpoint is reloaded and scored once on the held-out
+test set; the metrics are printed and written to
+`<train.ckpt_dir>/test_metrics.json`, matching the paper's train/val/test
+evaluation protocol (Table 1). `data.path`/`data.val_fraction` (a single file
+with an internal random split, or the built-in synthetic dataset) remain
+available as a quick smoke-test mode with no held-out test evaluation.

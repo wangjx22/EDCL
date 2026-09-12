@@ -33,6 +33,14 @@ pip install rdkit                 # optional, only needed for scaffold_split
 python scripts/make_scaffold_split.py --csv my_data.csv --out_dir splits/
 ```
 
+Then point `configs/finetune.yaml`'s `data.train_path`/`val_path`/`test_path`
+at `splits/train.pt`/`val.pt`/`test.pt` (instead of the legacy single
+`data.path`) so `train_finetune.py` trains on the exact scaffold split
+without re-shuffling, and automatically scores the held-out test set with
+the best validation checkpoint at the end of training — see
+["Feeding a scaffold split into train_finetune.py"](docs/data.md#feeding-a-scaffold-split-into-train_finetunepy)
+in `docs/data.md` for the full config.
+
 ## Run tests
 
 ```bash
