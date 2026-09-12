@@ -1,4 +1,4 @@
-# EDCL — Equivariant Denoising Contrastive Learning (Rewrite)
+# EDCL — Equivariant Denoising Contrastive Learning
 
 A from-scratch, dependency-light reimplementation of **EDCL**, following the
 published methodology. This rewrite replaces the legacy experiment code with
