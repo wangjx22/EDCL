@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Fine-tuning CLI: loads a pretrained encoder checkpoint (from
 train_pretrain.py) and trains encoder + task head end-to-end for a
-downstream regression target.
+downstream property-prediction task.
+
+Supports both task families the paper claims to evaluate on:
+- model.task_type: "regression"  -> MSE loss, reports MAE/RMSE (QM9, ESOL, ...)
+- model.task_type: "binary_classification" -> masked BCE-with-logits loss
+  (NaN-safe, for MoleculeNet's multi-label missing-value splits), reports
+  mean ROC-AUC across valid label columns (BACE, BBBP, ClinTox, Tox21, ...)
 
 Usage:
     python scripts/train_finetune.py --config configs/finetune.yaml
@@ -21,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from edcl import EDCLFinetuneModel
 from edcl.data import SyntheticMoleculeDataset, collate_molecules, load_pt_dataset
 from edcl.schedule import build_warmup_cosine_scheduler
+from edcl.metrics import masked_bce_loss, masked_mse_loss, classification_metrics, regression_metrics
 
 
 def build_dataset(cfg: dict):
@@ -30,9 +37,12 @@ def build_dataset(cfg: dict):
         return load_pt_dataset(
             path, require_y=True, expected_num_targets=num_targets
         )
+    task_type = cfg["model"].get("task_type", "regression")
+    label_type = "binary_classification" if task_type == "binary_classification" else "regression"
     return SyntheticMoleculeDataset(
         num_samples=cfg["data"].get("num_synthetic_samples", 256),
         num_targets=num_targets,
+        label_type=label_type,
     )
 
 
@@ -63,18 +73,21 @@ def main():
 
     num_targets = cfg["model"].get("num_targets", 1)
     head_hidden = cfg["model"].get("hidden", 128)
+    task_type = cfg["model"].get("task_type", "regression")
+    if task_type not in ("regression", "binary_classification"):
+        raise ValueError(f"model.task_type must be 'regression' or 'binary_classification', got {task_type!r}")
     ckpt = cfg.get("pretrained_ckpt")
     use_ema = bool(cfg.get("use_ema", True))
     if ckpt and os.path.exists(ckpt):
         model = EDCLFinetuneModel.from_pretrained(
-            ckpt, num_targets=num_targets, hidden=head_hidden, use_ema=use_ema
+            ckpt, num_targets=num_targets, hidden=head_hidden, use_ema=use_ema, task_type=task_type
         )
         print(f"loaded pretrained encoder from {ckpt}" + (" (EMA weights)" if use_ema else " (raw weights)"))
     else:
         from edcl.backbone import EquivariantEncoder
         encoder = EquivariantEncoder()
         model = EDCLFinetuneModel(
-            encoder, num_targets=num_targets, hidden=head_hidden
+            encoder, num_targets=num_targets, hidden=head_hidden, task_type=task_type
         )
         print("WARNING: no pretrained checkpoint found, training encoder from scratch")
     model = model.to(device)
@@ -89,7 +102,7 @@ def main():
         total_steps=tcfg["epochs"] * steps_per_epoch,
         min_lr_ratio=tcfg.get("min_lr_ratio", 0.0),
     )
-    loss_fn = torch.nn.MSELoss()
+    loss_fn = masked_bce_loss if task_type == "binary_classification" else masked_mse_loss
     os.makedirs(tcfg["ckpt_dir"], exist_ok=True)
 
     step = 0
@@ -111,13 +124,23 @@ def main():
 
         model.eval()
         val_losses = []
+        all_pred, all_y = [], []
         with torch.no_grad():
             for mb in val_loader:
                 mb = mb.to(device)
                 pred = model(mb.z, mb.pos, mb.batch)
                 val_losses.append(loss_fn(pred, mb.y).item())
+                all_pred.append(pred)
+                all_y.append(mb.y)
         val_loss = sum(val_losses) / max(1, len(val_losses))
-        print(f"epoch={epoch} val_loss={val_loss:.4f}")
+        all_pred = torch.cat(all_pred, dim=0)
+        all_y = torch.cat(all_y, dim=0)
+        if task_type == "binary_classification":
+            metrics = classification_metrics(all_pred, all_y)
+            print(f"epoch={epoch} val_loss={val_loss:.4f} val_auc={metrics['auc']:.4f} (valid_tasks={metrics['num_valid_tasks']})")
+        else:
+            metrics = regression_metrics(all_pred, all_y)
+            print(f"epoch={epoch} val_loss={val_loss:.4f} val_mae={metrics['mae']:.4f} val_rmse={metrics['rmse']:.4f}")
 
         if val_loss < best_val:
             best_val = val_loss

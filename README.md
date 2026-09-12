@@ -38,7 +38,8 @@ src/edcl/
   heads.py            DenoiseHead (equivariant), EnergyHead, ProjectionHead, TaskHead
   losses.py           denoising NLL, KL prior, InfoNCE contrastive, energy MSE, EDCLLossWeights
   model.py            EDCLPretrainModel: dual-branch forward + combined loss (Eq. 17)
-  finetune.py         EDCLFinetuneModel: pretrained encoder + task head
+  finetune.py         EDCLFinetuneModel: pretrained encoder + task head (regression or binary_classification)
+  metrics.py          masked MSE/BCE losses (NaN-safe multi-label) + MAE/RMSE/ROC-AUC metrics
   data.py             validated .pt loading, MoleculeBatch, collation, synthetic fixture
 tests/                pytest suite (unit + integration; run `pytest -q` for current count)
 scripts/              train_pretrain.py, train_finetune.py (CLI)
@@ -61,6 +62,21 @@ See `docs/paper_equations.md` for the full table. Summary:
 | Energy auxiliary loss (supervised MSE vs. label, clean branch only; labels required when beta is non-zero) | `losses.energy_mse_loss` |
 | Combined objective (Eq. 17) | `losses.total_edcl_loss`, `losses.EDCLLossWeights` (alpha=0.1, beta=10, lambda=1) |
 | Fine-tuning protocol | `finetune.EDCLFinetuneModel` |
+
+## Downstream task types
+
+The paper evaluates on both regression benchmarks (QM9, ESOL, FreeSolv,
+Lipophilicity, ...) and binary/multi-label classification benchmarks
+(BACE, BBBP, ClinTox, HIV, MUV, PCBA, SIDER, Tox21, ToxCast, ...). Set
+`model.task_type` in `configs/finetune.yaml` accordingly:
+
+| `task_type` | Loss | Reported metrics | Missing labels |
+|---|---|---|---|
+| `regression` (default) | `metrics.masked_mse_loss` | MAE, RMSE (`metrics.regression_metrics`) | NaN entries in `y` are masked out of the loss |
+| `binary_classification` | `metrics.masked_bce_loss` (BCE-with-logits) | mean ROC-AUC across label columns with both classes present (`metrics.classification_metrics`); columns with only one class, or fully missing, are skipped rather than crashing | NaN entries in `y` (MoleculeNet's per-task missing values) are masked out of both the loss and AUC computation |
+
+`EDCLFinetuneModel`'s task head always outputs raw logits/values (no
+final sigmoid) so the same head works for either loss.
 
 
 ## Checkpoints produced

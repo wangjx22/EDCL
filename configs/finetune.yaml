@@ -13,6 +13,7 @@ use_ema: true            # use EMA-averaged encoder weights from the pretrain ch
 model:
   num_targets: 1
   hidden: 128
+  task_type: regression   # "regression" (MSE+MAE/RMSE) or "binary_classification" (masked BCE+ROC-AUC)
 
 train:
   epochs: 50

@@ -102,8 +102,8 @@ def validate_sample(
                 f"{where}['y'] must contain exactly {expected_num_targets} target(s), "
                 f"got {y.numel()}"
             )
-        if not torch.isfinite(y).all():
-            raise ValueError(f"{where}['y'] contains NaN or infinity")
+        if torch.isinf(y).any():
+            raise ValueError(f"{where}['y'] contains infinity")
 
 
 def load_pt_dataset(
@@ -171,14 +171,28 @@ class SyntheticMoleculeDataset(Dataset):
     """
 
     def __init__(self, num_samples: int = 64, min_atoms: int = 4, max_atoms: int = 12,
-                 num_targets: int = 1, seed: int = 0):
+                 num_targets: int = 1, seed: int = 0, label_type: str = "regression",
+                 nan_label_prob: float = 0.0):
+        """label_type: "regression" -> continuous y ~ N(0,1);
+        "binary_classification" -> y in {0., 1.}, with `nan_label_prob`
+        fraction of entries randomly set to NaN to exercise masked-loss /
+        missing-label handling (mirrors MoleculeNet's sparse label matrices).
+        """
+        if label_type not in ("regression", "binary_classification"):
+            raise ValueError(f"label_type must be 'regression' or 'binary_classification', got {label_type!r}")
         g = torch.Generator().manual_seed(seed)
         self.samples = []
         for _ in range(num_samples):
             n = int(torch.randint(min_atoms, max_atoms + 1, (1,), generator=g).item())
             z = torch.randint(1, 10, (n,), generator=g)
             pos = torch.randn(n, 3, generator=g) * 1.5
-            y = torch.randn(num_targets, generator=g)
+            if label_type == "regression":
+                y = torch.randn(num_targets, generator=g)
+            else:
+                y = (torch.rand(num_targets, generator=g) > 0.5).float()
+                if nan_label_prob > 0:
+                    drop = torch.rand(num_targets, generator=g) < nan_label_prob
+                    y = torch.where(drop, torch.full_like(y, float("nan")), y)
             self.samples.append({"z": z, "pos": pos, "y": y})
 
     def __len__(self):
