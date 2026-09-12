@@ -68,6 +68,13 @@ python scripts/predict.py --checkpoint runs/finetune/best.pt \
     --input new_molecules.csv --smiles_col smiles --output predictions.csv
 ```
 
+Or, after `pip install -e .`, the equivalent installed console command:
+
+```bash
+edcl-predict --checkpoint runs/finetune/best.pt \
+    --input new_molecules.csv --smiles_col smiles --output predictions.csv
+```
+
 The input CSV needs one SMILES column (default name `smiles`); any other
 columns (e.g. an `id`) are passed through unchanged. SMILES that fail to
 parse/embed are logged as a warning and get blank prediction columns
