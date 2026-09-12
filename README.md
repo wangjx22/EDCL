@@ -19,6 +19,19 @@ python scripts/train_pretrain.py --config configs/pretrain.yaml
 python scripts/train_finetune.py --config configs/finetune.yaml
 ```
 
+## Data preparation (MoleculeNet-style scaffold split)
+
+The paper's Table 1 classification benchmarks use a **scaffold split**
+(molecules grouped by Bemis-Murcko scaffold so structurally related
+molecules never leak across train/val/test) rather than a random split.
+`src/edcl/splits.py` implements this protocol; see
+[`docs/data.md`](docs/data.md) for the full data pipeline, or run it
+end-to-end on a CSV of `smiles,label` rows:
+
+```bash
+pip install rdkit                 # optional, only needed for scaffold_split
+python scripts/make_scaffold_split.py --csv my_data.csv --out_dir splits/
+```
 
 ## Run tests
 

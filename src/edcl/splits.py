@@ -24,7 +24,7 @@ __all__ = ["compute_scaffold", "scaffold_split"]
 
 def _require_rdkit():
     try:
-        from rdkit import Chem  # noqa: F401
+        from rdkit import Chem, RDLogger  # noqa: F401
         from rdkit.Chem.Scaffolds import MurckoScaffold  # noqa: F401
     except ImportError as exc:  # pragma: no cover - exercised only when rdkit absent
         raise ImportError(
@@ -32,6 +32,13 @@ def _require_rdkit():
             "Install it with `pip install rdkit` (or `rdkit-pypi` on older "
             "platforms) and retry."
         ) from exc
+    # RDKit's C++ parser writes malformed-SMILES warnings straight to stderr,
+    # bypassing Python's logging/warnings machinery entirely. On real-world
+    # datasets (which often contain a handful of bad SMILES) this floods the
+    # console with noise the caller has no way to suppress. We silence it
+    # once here; callers who *want* RDKit's native logs back can re-enable
+    # them with `from rdkit import RDLogger; RDLogger.EnableLog('rdApp.*')`.
+    RDLogger.DisableLog("rdApp.*")
     return Chem, MurckoScaffold
 
 
