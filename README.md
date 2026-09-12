@@ -1,29 +1,6 @@
 # EDCL — Equivariant Denoising Contrastive Learning
 
-A from-scratch, dependency-light reimplementation of **EDCL**, following the
-published methodology. This rewrite replaces the legacy experiment code with
-a small, fully-tested `src/edcl` package plus CLI training scripts.
 
-> Original repo: https://github.com/wangjx22/EDCL
-
-## Why a rewrite?
-
-The original repository mixed experiment scaffolding, hard-coded paths, and
-partial implementations. This rewrite:
-- Implements every paper equation as a **standalone, unit-tested function**
-  (`src/edcl/losses.py`, `validity.py`, `noise_generator.py`), each docstring
-  citing the corresponding equation number.
-- Provides a genuinely **SE(3)/E(3)-equivariant encoder** (see Deviations
-  below) with numeric equivariance tests, not just "should be invariant"
-  comments.
-- Ships **runnable CLI trainers** (`scripts/train_pretrain.py`,
-  `scripts/train_finetune.py`) that work out of the box on a synthetic
-  dataset (no external data required), and can be pointed at real molecular
-  data via a `.pt` file.
-- Has **zero hard dependency on `torch_geometric` / `e3nn`**: a minimal
-  scatter/radius-graph implementation lives in `src/edcl/ops.py`, so the
-  whole package installs with just `torch` + `pyyaml` (see
-  `requirements.txt`).
 
 ## Install
 
