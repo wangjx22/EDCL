@@ -10,16 +10,24 @@ Usage:
     pip install rdkit
     python scripts/make_scaffold_split.py --csv my_data.csv --out_dir splits/
 
-The CSV must have a SMILES column (default name "smiles") and a label
-column (default name "label"). 3-D coordinates are generated with RDKit's
-ETKDG embedder + a quick MMFF94 optimization; molecules that fail to embed
-(rare, e.g. disconnected fragments) are skipped with a warning and excluded
-from every split so indices stay consistent.
+The CSV must have a SMILES column (default name "smiles") and one or more
+label columns (default: a single column named "label"; pass
+`--label_col task1,task2,...` for multi-task datasets such as Tox21
+(12 tasks), ToxCast (~600), SIDER (27), MUV (17), ClinTox (2) or PCBA
+(~128) -- the MoleculeNet norm is that most rows have some tasks
+unmeasured, encoded as an empty cell; those become `NaN` in `y` and are
+automatically excluded from the loss/metrics by
+`edcl.metrics.masked_bce_loss` / `classification_metrics` (see
+`docs/data.md`). 3-D coordinates are generated with RDKit's ETKDG embedder
++ a quick MMFF94 optimization; molecules that fail to embed (rare, e.g.
+disconnected fragments) are skipped with a warning and excluded from every
+split so indices stay consistent.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 import warnings
 from pathlib import Path
@@ -27,7 +35,23 @@ from pathlib import Path
 import torch
 
 
-def _read_csv(path: str, smiles_col: str, label_col: str):
+def _parse_label_cols(label_col: str) -> list[str]:
+    cols = [c.strip() for c in label_col.split(",") if c.strip()]
+    if not cols:
+        raise ValueError(f"--label_col must name at least one column, got {label_col!r}")
+    return cols
+
+
+def _read_csv(path: str, smiles_col: str, label_cols: list[str]):
+    """Read SMILES + one-or-more label columns.
+
+    Missing/blank/non-numeric label cells become `float('nan')` (the
+    MoleculeNet "unmeasured task" convention); every other numeric cell is
+    parsed as-is (so both regression targets and {0,1} classification
+    labels work unchanged). Returns `labels` as a list of per-row lists,
+    one float per requested column (length 1 for the common single-task
+    case).
+    """
     smiles, labels = [], []
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
@@ -35,20 +59,38 @@ def _read_csv(path: str, smiles_col: str, label_col: str):
             raise ValueError(
                 f"CSV column '{smiles_col}' not found; available columns: {reader.fieldnames}"
             )
-        if label_col not in reader.fieldnames:
+        missing_cols = [c for c in label_cols if c not in reader.fieldnames]
+        if missing_cols:
             raise ValueError(
-                f"CSV column '{label_col}' not found; available columns: {reader.fieldnames}"
+                f"CSV label column(s) {missing_cols} not found; available columns: {reader.fieldnames}"
             )
         for row in reader:
             smiles.append(row[smiles_col].strip())
-            labels.append(float(row[label_col]))
+            row_labels = []
+            for col in label_cols:
+                raw = row[col].strip() if row[col] is not None else ""
+                if raw == "":
+                    row_labels.append(float("nan"))
+                else:
+                    try:
+                        row_labels.append(float(raw))
+                    except ValueError:
+                        row_labels.append(float("nan"))
+            labels.append(row_labels)
     if not smiles:
         raise ValueError(f"No rows read from {path}")
+    n_missing = sum(math.isnan(v) for row in labels for v in row)
+    if n_missing:
+        print(f"Note: {n_missing} missing label value(s) across {len(label_cols)} task column(s) -> NaN (masked out).")
     return smiles, labels
 
 
-def _smiles_to_sample(smiles: str, label: float, seed: int):
+def _smiles_to_sample(smiles: str, label: list[float], seed: int):
     """Embed a 3-D conformer for `smiles` and build a {z, pos, y} sample.
+
+    `label` is a list of one-or-more per-task floats (NaN = unmeasured);
+    stored as `y` with shape `[num_tasks]` so single- and multi-task CSVs
+    share the same code path.
 
     Returns None (with a warning) if embedding fails, so the caller can
     skip the molecule without breaking index alignment.
@@ -74,16 +116,22 @@ def _smiles_to_sample(smiles: str, label: float, seed: int):
     conf = mol.GetConformer()
     z = torch.tensor([atom.GetAtomicNum() for atom in mol.GetAtoms()], dtype=torch.long)
     pos = torch.tensor(conf.GetPositions(), dtype=torch.float32)
-    y = torch.tensor([label], dtype=torch.float32)
+    y = torch.tensor(label, dtype=torch.float32)
     return {"z": z, "pos": pos, "y": y}
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--csv", required=True, help="Input CSV with a SMILES column and a label column")
+    parser.add_argument("--csv", required=True, help="Input CSV with a SMILES column and one or more label columns")
     parser.add_argument("--out_dir", required=True, help="Directory to write train.pt/val.pt/test.pt into")
     parser.add_argument("--smiles_col", default="smiles")
-    parser.add_argument("--label_col", default="label")
+    parser.add_argument(
+        "--label_col",
+        default="label",
+        help="Single column name, or a comma-separated list for multi-task "
+             "datasets (e.g. --label_col NR-AR,NR-AR-LBD,... for Tox21). "
+             "Blank/unparseable cells become NaN (masked out of loss/metrics).",
+    )
     parser.add_argument("--frac_train", type=float, default=0.8)
     parser.add_argument("--frac_val", type=float, default=0.1)
     parser.add_argument("--frac_test", type=float, default=0.1)
@@ -100,8 +148,9 @@ def main(argv=None) -> int:
         )
         return 1
 
-    smiles, labels = _read_csv(args.csv, args.smiles_col, args.label_col)
-    print(f"Read {len(smiles)} rows from {args.csv}")
+    label_cols = _parse_label_cols(args.label_col)
+    smiles, labels = _read_csv(args.csv, args.smiles_col, label_cols)
+    print(f"Read {len(smiles)} rows from {args.csv} ({len(label_cols)} task column(s): {label_cols})")
 
     samples, kept_smiles = [], []
     for smi, lab in zip(smiles, labels):

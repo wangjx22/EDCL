@@ -111,3 +111,105 @@ def test_scaffold_split_feeds_finetune_three_path_mode(tmp_path):
     assert metrics_path.exists(), "test_metrics.json was not written"
     metrics = json.loads(metrics_path.read_text())
     assert "mae" in metrics and "rmse" in metrics
+
+
+# Multi-task classification rows: 3 binary tasks per molecule, with some
+# cells deliberately left blank ("") to model MoleculeNet's real missing-
+# label convention (e.g. Tox21/ToxCast/SIDER/MUV/ClinTox/PCBA all have
+# incomplete per-task labels). Round-11 verification found that
+# make_scaffold_split.py could only ever emit a single-column `y`, so none
+# of those 6 (of the paper's 9 named) MoleculeNet datasets were reachable
+# through the shipped CSV importer even though masked_bce_loss /
+# classification_metrics already supported NaN-masked multi-task targets.
+MULTI_TASK_CSV_ROWS = [
+    ("c1ccccc1", "1", "0", ""),
+    ("c1ccncc1", "0", "1", "1"),
+    ("c1cncnc1", "1", "", "0"),
+    ("c1ccoc1", "0", "0", "1"),
+    ("c1ccsc1", "1", "1", ""),
+    ("c1cc[nH]c1", "0", "", "0"),
+    ("c1cnc[nH]1", "1", "0", "1"),
+    ("c1ccc2[nH]ccc2c1", "", "1", "0"),
+    ("c1ccc2ccccc2c1", "1", "0", "1"),
+    ("c1ccc2ncccc2c1", "0", "1", ""),
+    ("C1CCCCC1", "1", "", "1"),
+    ("C1CCCC1", "0", "0", "0"),
+    ("C1CCNCC1", "1", "1", "1"),
+    ("C1COCCN1", "0", "", "0"),
+    ("c1ccc2c(c1)cccn2", "1", "0", "1"),
+]
+
+
+def _write_multi_task_csv(path):
+    with open(path, "w") as f:
+        f.write("smiles,taskA,taskB,taskC\n")
+        for smi, a, b, c in MULTI_TASK_CSV_ROWS:
+            f.write(f"{smi},{a},{b},{c}\n")
+
+
+def test_scaffold_split_supports_multi_task_csv_with_missing_labels(tmp_path):
+    """Round-11 fix: --label_col accepts a comma-separated list, and blank
+    cells become NaN that flow untouched through train_finetune.py's
+    masked BCE loss and per-task AUC computation."""
+    csv_path = tmp_path / "multi.csv"
+    split_dir = tmp_path / "splits"
+    ckpt_dir = tmp_path / "ckpt"
+    _write_multi_task_csv(csv_path)
+
+    split_cmd = [
+        sys.executable, os.path.join(SCRIPTS, "make_scaffold_split.py"),
+        "--csv", str(csv_path), "--out_dir", str(split_dir),
+        "--label_col", "taskA,taskB,taskC",
+        "--frac_train", "0.6", "--frac_val", "0.2", "--frac_test", "0.2",
+        "--seed", "0",
+    ]
+    r = subprocess.run(split_cmd, capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, f"make_scaffold_split.py failed:\n{r.stdout}\n{r.stderr}"
+    assert "3 task column(s)" in r.stdout, r.stdout
+    assert "missing label value" in r.stdout, r.stdout
+
+    import torch
+    train_samples = torch.load(split_dir / "train.pt", weights_only=False)
+    assert all(s["y"].shape == (3,) for s in train_samples), "y must be [3] per molecule"
+    assert any(torch.isnan(s["y"]).any() for s in train_samples), "expected some NaN (missing) labels"
+
+    cfg_text = textwrap.dedent(f"""
+    seed: 42
+    device: cpu
+    data:
+      train_path: {split_dir / 'train.pt'}
+      val_path: {split_dir / 'val.pt'}
+      test_path: {split_dir / 'test.pt'}
+      batch_size: 4
+    pretrained_ckpt: null
+    use_ema: false
+    model:
+      num_targets: 3
+      hidden: 8
+      task_type: binary_classification
+    train:
+      epochs: 1
+      lr: 1.0e-3
+      weight_decay: 0.0
+      grad_clip: 5.0
+      log_every: 50
+      ckpt_dir: {ckpt_dir}
+      warmup_epochs: 0
+      min_lr_ratio: 1.0
+    """)
+    cfg_path = tmp_path / "ft.yaml"
+    cfg_path.write_text(cfg_text)
+
+    ft_cmd = [sys.executable, os.path.join(SCRIPTS, "train_finetune.py"), "--config", str(cfg_path)]
+    r = subprocess.run(ft_cmd, capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, f"train_finetune.py (multi-task 3-path mode) failed:\n{r.stdout}\n{r.stderr}"
+    assert "test_auc" in r.stdout, f"no held-out test AUC printed:\n{r.stdout}"
+
+    metrics_path = ckpt_dir / "test_metrics.json"
+    assert metrics_path.exists(), "test_metrics.json was not written"
+    metrics = json.loads(metrics_path.read_text())
+    assert "auc" in metrics and "num_valid_tasks" in metrics
+    # With 3 tasks and both classes present in most splits, at least one
+    # task column should be scoreable (num_valid_tasks counts columns where
+    # AUC is well-defined, i.e. both classes present among non-missing rows).
+    assert metrics["num_valid_tasks"] >= 1, metrics

@@ -77,6 +77,17 @@ python scripts/make_scaffold_split.py --csv my_dataset.csv --out_dir data/my_dat
     --frac_train 0.8 --frac_val 0.1 --frac_test 0.1
 ```
 
+For multi-task datasets (Tox21, ToxCast, SIDER, MUV, ClinTox, PCBA), pass
+`--label_col` as a comma-separated list matching your CSV's task columns;
+empty cells become `NaN` and are excluded from the loss/AUC by
+`edcl.metrics.masked_bce_loss`/`classification_metrics` (the same
+missing-label convention MoleculeNet uses):
+
+```bash
+python scripts/make_scaffold_split.py --csv tox21.csv --out_dir data/tox21_split \
+    --label_col NR-AR,NR-AR-LBD,NR-AhR,SR-p53
+```
+
 ## Feeding a scaffold split into `train_finetune.py`
 
 Point `data.train_path` / `data.val_path` / `data.test_path` in

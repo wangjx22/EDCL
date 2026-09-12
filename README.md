@@ -33,6 +33,22 @@ pip install rdkit                 # optional, only needed for scaffold_split
 python scripts/make_scaffold_split.py --csv my_data.csv --out_dir splits/
 ```
 
+For **multi-task** benchmarks (Tox21 has 12 tasks, ToxCast ~600, SIDER 27,
+MUV 17, ClinTox 2, PCBA ~128 — 6 of the 9 MoleculeNet datasets named
+below), pass a comma-separated `--label_col` and leave missing measurements
+as empty cells; they become `NaN` and are automatically ignored by the
+masked BCE loss and per-task AUC (`edcl.metrics.masked_bce_loss` /
+`classification_metrics`):
+
+```bash
+python scripts/make_scaffold_split.py --csv tox21.csv --out_dir splits/tox21 \
+    --label_col NR-AR,NR-AR-LBD,NR-AhR,NR-Aromatase,NR-ER,NR-ER-LBD,NR-PPAR-gamma,SR-ARE,SR-ATAD5,SR-HSE,SR-MMP,SR-p53
+```
+
+Then set `model.num_targets` to the number of `--label_col` entries and
+`model.task_type: binary_classification` in `configs/finetune.yaml`.
+
+
 Then point `configs/finetune.yaml`'s `data.train_path`/`val_path`/`test_path`
 at `splits/train.pt`/`val.pt`/`test.pt` (instead of the legacy single
 `data.path`) so `train_finetune.py` trains on the exact scaffold split
