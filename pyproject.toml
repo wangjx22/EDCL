@@ -18,5 +18,8 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 
+[project.scripts]
+edcl-predict = "edcl.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
