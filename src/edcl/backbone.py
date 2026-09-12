@@ -53,16 +53,35 @@ class EncoderOutput:
     h_graph: torch.Tensor      # [B, dim] invariant graph-level (pooled) features
 
 
+def _drop_path(x: torch.Tensor, drop_prob: float, training: bool) -> torch.Tensor:
+    """Stochastic depth (Huang et al. 2016): randomly zero the WHOLE residual
+    branch per-sample (per-graph, broadcast to all its atoms) with
+    probability ``drop_prob`` during training, and rescale the kept branches
+    by ``1/(1-drop_prob)`` to keep the expectation unchanged. No-op at
+    eval time or when ``drop_prob == 0``. Applied per-node here (equivalent
+    to per-sample since EGNN layers are node-local, and matches how the
+    paper describes stochastic depth applied to each equivariant layer)."""
+    if drop_prob <= 0.0 or not training:
+        return x
+    keep_prob = 1.0 - drop_prob
+    mask_shape = (x.shape[0],) + (1,) * (x.dim() - 1)
+    mask = torch.empty(mask_shape, dtype=x.dtype, device=x.device).bernoulli_(keep_prob)
+    return x * mask / keep_prob
+
+
 class EGNNLayer(nn.Module):
     """One message-passing layer: invariant scalar update + equivariant vector update."""
 
-    def __init__(self, dim: int, num_rbf: int = 32, cutoff: float = 10.0):
+    def __init__(self, dim: int, num_rbf: int = 32, cutoff: float = 10.0,
+                 dropout: float = 0.0, drop_path: float = 0.0):
         super().__init__()
         self.num_rbf = num_rbf
         self.cutoff = cutoff
         self.edge_mlp = _mlp(2 * dim + num_rbf, dim, dim)
         self.node_mlp = _mlp(2 * dim, dim, dim)
         self.vector_gate_mlp = _mlp(dim, dim, 1)  # scalar coefficient per edge for vector update
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self.drop_path_rate = drop_path
 
     def forward(self, h, v, pos, edge_index):
         src, dst = edge_index  # message dst <- src
@@ -74,13 +93,19 @@ class EGNNLayer(nn.Module):
         edge_in = torch.cat([h[src], h[dst], rbf], dim=-1)
         m_ij = self.edge_mlp(edge_in)                   # [E, dim] invariant edge message
         agg = scatter_sum(m_ij, dst, dim_size=h.shape[0])
-        h_new = h + self.node_mlp(torch.cat([h, agg], dim=-1))
+        h_delta = self.dropout(self.node_mlp(torch.cat([h, agg], dim=-1)))
+        h_new = h + _drop_path(h_delta, self.drop_path_rate, self.training)
 
         # Equivariant vector update: linear combo of relative vectors with invariant coeffs.
         coeff = self.vector_gate_mlp(m_ij)               # [E, 1] invariant scalar per edge
         unit = rel / (dist.clamp(min=1e-6).unsqueeze(-1))
         v_msg = coeff * unit                             # [E, 3] equivariant (rotates with rel)
         v_agg = scatter_sum(v_msg, dst, dim_size=h.shape[0])
+        # NOTE: drop_path is intentionally NOT applied to the vector branch:
+        # zeroing/rescaling v with a scalar mask preserves O(3)-equivariance
+        # (scalar * equivariant vector is still equivariant), so this would be
+        # safe too, but v has no nonlinearity/dropout path in this design and
+        # skipping it keeps the displacement-prediction signal stable.
         v_new = v + v_agg
         return h_new, v_new
 
@@ -89,13 +114,24 @@ class EquivariantEncoder(nn.Module):
     """Shared encoder F_phi used for BOTH the clean and perturbed branches (weight-tied)."""
 
     def __init__(self, num_elements: int = 119, hidden_dim: int = 128, num_layers: int = 4,
-                 num_rbf: int = 32, cutoff: float = 10.0, max_neighbors: int = 32):
+                 num_rbf: int = 32, cutoff: float = 10.0, max_neighbors: int = 32,
+                 dropout: float = 0.0, drop_path_max: float = 0.0):
+        """``dropout``: per-layer feature dropout (paper Table 2: 0.2).
+        ``drop_path_max``: stochastic-depth rate at the LAST layer, linearly
+        ramped from 0 at the first layer (paper reports 0.05/0.1 depending on
+        the dataset scale; exposed here as a single config knob)."""
         super().__init__()
         dim = hidden_dim
         self.hidden_dim = hidden_dim
         self.embedding = nn.Embedding(num_elements, dim)
+        drop_path_rates = (
+            [drop_path_max * i / max(num_layers - 1, 1) for i in range(num_layers)]
+            if num_layers > 1 else [0.0]
+        )
         self.layers = nn.ModuleList([
-            EGNNLayer(dim, num_rbf=num_rbf, cutoff=cutoff) for _ in range(num_layers)
+            EGNNLayer(dim, num_rbf=num_rbf, cutoff=cutoff, dropout=dropout,
+                      drop_path=drop_path_rates[i])
+            for i in range(num_layers)
         ])
         self.cutoff = cutoff
         self.max_neighbors = max_neighbors

@@ -27,6 +27,8 @@ class EDCLConfig:
     omega: float = 0.1      # prior std for KL, Eq.14
     r_min: float = 0.8      # validity constraint, Angstrom
     tau: float = 0.1        # InfoNCE temperature
+    dropout: float = 0.0        # per-layer feature dropout (paper Table 2: 0.2)
+    drop_path_max: float = 0.0  # stochastic depth rate at the last layer (paper: 0.05/0.1)
     weights: EDCLLossWeights = None
 
     def __post_init__(self):
@@ -41,6 +43,7 @@ class EDCLPretrainModel(nn.Module):
         self.encoder = EquivariantEncoder(
             num_elements=config.num_elements, hidden_dim=config.hidden_dim,
             num_layers=config.num_layers, cutoff=config.cutoff, max_neighbors=config.max_neighbors,
+            dropout=config.dropout, drop_path_max=config.drop_path_max,
         )
         self.noise_gen = NoiseGenerator(config.hidden_dim)
         self.denoise_head = DenoiseHead(config.hidden_dim)

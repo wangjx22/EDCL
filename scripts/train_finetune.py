@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from edcl import EDCLFinetuneModel
 from edcl.data import SyntheticMoleculeDataset, collate_molecules, load_pt_dataset
+from edcl.schedule import build_warmup_cosine_scheduler
 
 
 def build_dataset(cfg: dict):
@@ -63,11 +64,12 @@ def main():
     num_targets = cfg["model"].get("num_targets", 1)
     head_hidden = cfg["model"].get("hidden", 128)
     ckpt = cfg.get("pretrained_ckpt")
+    use_ema = bool(cfg.get("use_ema", True))
     if ckpt and os.path.exists(ckpt):
         model = EDCLFinetuneModel.from_pretrained(
-            ckpt, num_targets=num_targets, hidden=head_hidden
+            ckpt, num_targets=num_targets, hidden=head_hidden, use_ema=use_ema
         )
-        print(f"loaded pretrained encoder from {ckpt}")
+        print(f"loaded pretrained encoder from {ckpt}" + (" (EMA weights)" if use_ema else " (raw weights)"))
     else:
         from edcl.backbone import EquivariantEncoder
         encoder = EquivariantEncoder()
@@ -79,6 +81,14 @@ def main():
 
     tcfg = cfg["train"]
     opt = torch.optim.AdamW(model.parameters(), lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
+    warmup_epochs = tcfg.get("warmup_epochs", 0)
+    steps_per_epoch = max(1, len(train_loader))
+    scheduler = build_warmup_cosine_scheduler(
+        opt,
+        warmup_steps=warmup_epochs * steps_per_epoch,
+        total_steps=tcfg["epochs"] * steps_per_epoch,
+        min_lr_ratio=tcfg.get("min_lr_ratio", 0.0),
+    )
     loss_fn = torch.nn.MSELoss()
     os.makedirs(tcfg["ckpt_dir"], exist_ok=True)
 
@@ -94,8 +104,9 @@ def main():
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg["grad_clip"])
             opt.step()
+            scheduler.step()
             if step % tcfg.get("log_every", 20) == 0:
-                print(f"epoch={epoch} step={step} train_loss={loss.item():.4f}")
+                print(f"epoch={epoch} step={step} lr={scheduler.get_last_lr()[0]:.2e} train_loss={loss.item():.4f}")
             step += 1
 
         model.eval()

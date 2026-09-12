@@ -66,7 +66,28 @@ See `docs/paper_equations.md` for the full table. Summary:
 ## Checkpoints produced
 
 - `train_pretrain.py` saves `{ckpt_dir}/last.pt` (and periodic epoch
-  checkpoints) containing `encoder_state_dict` + `encoder_config`.
+  checkpoints) containing `encoder_state_dict` + `encoder_config`, plus
+  `ema_encoder_state_dict` (EMA-averaged encoder weights, decay set by
+  `train.ema_decay`; omitted if `ema_decay <= 0`).
 - `train_finetune.py` loads that checkpoint via
-  `EDCLFinetuneModel.from_pretrained(...)` and saves the best fine-tuned
-  model (encoder + task head) to `{ckpt_dir}/best.pt`.
+  `EDCLFinetuneModel.from_pretrained(...)` (using the EMA weights by
+  default — set `use_ema: false` in `configs/finetune.yaml` to use the raw
+  weights instead) and saves the best fine-tuned model (encoder + task
+  head) to `{ckpt_dir}/best.pt`.
+
+## Deviations from the paper
+
+This is a faithful-but-scaled-down reimplementation. Known deviations,
+tracked here so results are not silently misattributed to the method:
+
+| # | Paper (see `paper.pdf`) | This repo | Why / impact |
+|---|---|---|---|
+| D1 | Encoder F_phi = Equiformer V2 (SO(3)/e3nn, spherical harmonics up to L_max, Table 9) | `backbone.EquivariantEncoder`: an E(3)-equivariant EGNN (invariant scalar messages + gated equivariant vector channel) | Avoids the heavy `e3nn`/Equiformer-V2 dependency. Same equivariance guarantee (rotation/translation/reflection), smaller model. See `backbone.py` module docstring. |
+| D2 | `num_layers` = 20 Equiformer-V2 blocks (Table 9) | `configs/*.yaml`: `num_layers: 4` | CPU-friendly default for the smoke tests in this repo; raise in your own config for full-scale runs. |
+| D3 | `max_neighbors` = 50 (Table 9) | `configs/*.yaml`: `max_neighbors: 32` | Same reason as D2. |
+| D4 | Training recipe (Table 2): linear LR warmup + cosine annealing, EMA of encoder weights (decay 0.999, used for eval/downstream), dropout 0.2, stochastic depth 0.05/0.1 | Implemented: `schedule.build_warmup_cosine_scheduler` (warmup+cosine, wired into both training scripts via `train.warmup_epochs`/`train.min_lr_ratio`), `ema.EMA` (wired into `train_pretrain.py` via `train.ema_decay`, consumed by `EDCLFinetuneModel.from_pretrained(use_ema=...)`), `backbone.EGNNLayer` dropout + `_drop_path` stochastic depth (wired via `EDCLConfig.dropout`/`drop_path_max`, linearly scheduled across layers) | Fixed in this round (previously flat AdamW with no LR schedule/EMA/regularisation — see `tests/test_training_recipe.py` for behavioural pins). Defaults in `configs/pretrain.yaml`: `dropout=0.2`, `drop_path_max=0.1`, `ema_decay=0.999`, `warmup_epochs=5`, matching Table 2 where the paper gives exact numbers. |
+| D5 | Dataset scale / exact benchmarks (e.g. QM9/GEOM subsets, Table 3-8 numbers) | `data.SyntheticMoleculeDataset` fallback when `data.path` is null; real data must be supplied as a validated `.pt` (`docs/data.md`) | This repo ships no dataset; reproducing headline numbers requires the paper's actual training data, which is not redistributed here. |
+
+None of D1-D5 affect the correctness of the loss/objective math (Eq. 1-17
+and `docs/paper_equations.md`), which is verified in
+`tests/test_losses.py`, `tests/test_validity.py`, `tests/test_equivariance.py`.

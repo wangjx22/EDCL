@@ -8,6 +8,7 @@ data:
   val_fraction: 0.1
 
 pretrained_ckpt: checkpoints/pretrain/last.pt   # from train_pretrain.py
+use_ema: true            # use EMA-averaged encoder weights from the pretrain checkpoint if present
 
 model:
   num_targets: 1
@@ -20,3 +21,5 @@ train:
   grad_clip: 5.0
   log_every: 20
   ckpt_dir: checkpoints/finetune
+  warmup_epochs: 2
+  min_lr_ratio: 0.01

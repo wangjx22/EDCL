@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from edcl import EDCLPretrainModel, EDCLConfig, EDCLLossWeights
 from edcl.data import SyntheticMoleculeDataset, collate_molecules, load_pt_dataset
+from edcl.ema import EMA
+from edcl.schedule import build_warmup_cosine_scheduler
 
 
 def build_dataset(cfg: dict):
@@ -66,12 +68,20 @@ def main():
         omega=mcfg.get("omega", 0.1),
         r_min=mcfg.get("r_min", 0.8),
         tau=mcfg.get("tau", 0.1),
+        dropout=mcfg.get("dropout", 0.0),
+        drop_path_max=mcfg.get("drop_path_max", 0.0),
         weights=EDCLLossWeights(alpha=wcfg["alpha"], beta=wcfg["beta"], lam=wcfg["lam"]),
     )
     model = EDCLPretrainModel(config).to(device)
 
     tcfg = cfg["train"]
     opt = torch.optim.AdamW(model.parameters(), lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
+    total_steps = tcfg["epochs"] * max(len(loader), 1)
+    warmup_steps = tcfg.get("warmup_epochs", 0) * max(len(loader), 1)
+    scheduler = build_warmup_cosine_scheduler(opt, warmup_steps, total_steps,
+                                               min_lr_ratio=tcfg.get("min_lr_ratio", 0.0))
+    ema_decay = tcfg.get("ema_decay", 0.0)
+    ema = EMA(model.encoder, decay=ema_decay) if ema_decay > 0.0 else None
     os.makedirs(tcfg["ckpt_dir"], exist_ok=True)
 
     step = 0
@@ -84,23 +94,31 @@ def main():
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg["grad_clip"])
             opt.step()
+            scheduler.step()
+            if ema is not None:
+                ema.update(model.encoder)
             if step % tcfg.get("log_every", 50) == 0:
+                lr_now = scheduler.get_last_lr()[0]
                 msg = " ".join(f"{k}={v.item():.4f}" for k, v in logs.items())
-                print(f"epoch={epoch} step={step} {msg}")
+                print(f"epoch={epoch} step={step} lr={lr_now:.2e} {msg}")
             step += 1
 
         if (epoch + 1) % tcfg.get("ckpt_every_epoch", 10) == 0 or epoch == tcfg["epochs"] - 1:
             ckpt_path = os.path.join(tcfg["ckpt_dir"], "last.pt")
-            torch.save({
+            ckpt = {
                 "encoder_state_dict": model.encoder.state_dict(),
                 "encoder_config": dict(
                     num_elements=config.num_elements, hidden_dim=config.hidden_dim,
                     num_layers=config.num_layers, cutoff=config.cutoff,
-                    max_neighbors=config.max_neighbors,
+                    max_neighbors=config.max_neighbors, dropout=config.dropout,
+                    drop_path_max=config.drop_path_max,
                 ),
                 "epoch": epoch,
-            }, ckpt_path)
-            print(f"saved checkpoint -> {ckpt_path}")
+            }
+            if ema is not None:
+                ckpt["ema_encoder_state_dict"] = ema.state_dict()
+            torch.save(ckpt, ckpt_path)
+            print(f"saved checkpoint -> {ckpt_path}" + (" (with EMA weights)" if ema is not None else ""))
 
 
 if __name__ == "__main__":

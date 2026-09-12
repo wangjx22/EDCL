@@ -13,12 +13,14 @@ data:
 model:
   num_elements: 119
   hidden_dim: 128
-  num_layers: 4
+  num_layers: 4          # paper uses 20 Equiformer-V2 blocks (Table 9); reduced, see README Deviations
   cutoff: 5.0
-  max_neighbors: 32
+  max_neighbors: 32      # paper uses 50 (Table 9); reduced for CPU-friendly smoke tests
   omega: 0.1
   r_min: 0.8
   tau: 0.1
+  dropout: 0.2           # paper Table 2
+  drop_path_max: 0.1     # stochastic depth rate at last layer; paper reports 0.05/0.1, linearly scaled from 0 across layers
 
 weights:
   alpha: 0.1     # contrastive
@@ -33,3 +35,6 @@ train:
   log_every: 50
   ckpt_dir: checkpoints/pretrain
   ckpt_every_epoch: 10
+  warmup_epochs: 5       # linear LR warmup (paper Table 2), then cosine decay
+  min_lr_ratio: 0.01     # cosine decay floor as a fraction of peak lr
+  ema_decay: 0.999       # EMA of encoder weights (paper Table 2); set 0 to disable
