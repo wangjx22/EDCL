@@ -42,5 +42,27 @@ torch.save(samples, "molecules.pt")
 
 The loader validates the complete file eagerly on CPU and reports the failing
 sample index before training starts. Dataset acquisition and chemistry-specific
-normalization/splitting remain external to this repository so their provenance
-can be managed by the user.
+normalization remain external to this repository so their provenance can be
+managed by the user.
+
+## Scaffold splitting (MoleculeNet protocol)
+
+The paper reports MoleculeNet classification results using a **scaffold
+split** (Table 1: "Scaffold AUC-ROC"), not a random split: molecules sharing
+a Bemis-Murcko scaffold are kept in the same split so structurally related
+molecules cannot leak between train/val/test. `edcl.splits.scaffold_split`
+reproduces this protocol given the dataset's SMILES strings (in the same
+order as the samples in your `.pt` file):
+
+```python
+from edcl.splits import scaffold_split
+
+train_idx, val_idx, test_idx = scaffold_split(
+    smiles_list, frac_train=0.8, frac_val=0.1, frac_test=0.1
+)
+```
+
+The returned index lists can be used to slice your sample list before saving
+separate `train.pt`/`val.pt`/`test.pt` files. This function requires the
+optional `rdkit` dependency (`pip install rdkit`); it is not needed for
+QM9/QM7-style random splits or for the core `z`/`pos`/`y` training pipeline.

@@ -2,3 +2,6 @@ torch>=2.0
 numpy>=1.22
 pyyaml>=6.0
 pytest>=7.0
+# rdkit is optional: only needed for scaffold_split() (edcl.splits), used to
+# reproduce the paper's MoleculeNet "Scaffold" train/val/test protocol.
+# rdkit>=2023.3.1
