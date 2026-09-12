@@ -16,12 +16,18 @@ class EDCLFinetuneModel(nn.Module):
         self.task_head = TaskHead(encoder.hidden_dim, num_targets=num_targets, hidden=hidden)
 
     @classmethod
-    def from_pretrained(cls, ckpt_path: str, num_targets: int = 1, map_location="cpu"):
-        ckpt = torch.load(ckpt_path, map_location=map_location)
+    def from_pretrained(
+        cls,
+        ckpt_path: str,
+        num_targets: int = 1,
+        map_location="cpu",
+        hidden: int = 128,
+    ):
+        ckpt = torch.load(ckpt_path, map_location=map_location, weights_only=True)
         encoder_cfg = ckpt["encoder_config"]
         encoder = EquivariantEncoder(**encoder_cfg)
         encoder.load_state_dict(ckpt["encoder_state_dict"])
-        return cls(encoder, num_targets=num_targets)
+        return cls(encoder, num_targets=num_targets, hidden=hidden)
 
     def forward(self, z: torch.Tensor, pos: torch.Tensor, batch: torch.Tensor):
         out = self.encoder(z, pos, batch)

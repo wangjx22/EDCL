@@ -18,7 +18,7 @@ def test_pretrain_forward_backward_finite_and_grads():
     cfg = EDCLConfig(hidden_dim=32, num_layers=2, cutoff=5.0, max_neighbors=16)
     model = EDCLPretrainModel(cfg)
     z, pos, batch = _synthetic_batch()
-    loss, logs = model(z, pos, batch)
+    loss, logs = model(z, pos, batch, target_energy=torch.randn(2))
     assert torch.isfinite(loss)
     loss.backward()
     n_params_with_grad = sum(1 for p in model.parameters() if p.grad is not None)
@@ -56,7 +56,11 @@ def test_save_and_load_encoder_roundtrip(tmp_path):
         "encoder_config": dict(num_elements=119, hidden_dim=16, num_layers=2,
                                 num_rbf=32, cutoff=5.0, max_neighbors=8),
     }, ckpt_path)
-    ft = EDCLFinetuneModel.from_pretrained(ckpt_path, num_targets=2)
+    ft = EDCLFinetuneModel.from_pretrained(
+        ckpt_path, 2, "cpu", hidden=24
+    )
+    assert ft.task_head.net[0].out_features == 24
+    assert ft.task_head.net[-1].in_features == 24
     z, pos, batch = _synthetic_batch()
     out = ft(z, pos, batch)
     assert out.shape == (2, 2)

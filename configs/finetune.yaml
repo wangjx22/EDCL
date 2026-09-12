@@ -2,9 +2,8 @@ seed: 42
 device: cpu
 
 data:
-  path: null              # .pt file with list[dict(z,pos,y)]
+  path: null              # validated .pt list[dict(z,pos,y)]; see docs/data.md
   num_synthetic_samples: 256
-  num_targets: 1
   batch_size: 32
   val_fraction: 0.1
 

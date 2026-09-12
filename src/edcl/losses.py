@@ -44,7 +44,14 @@ def info_nce_contrastive_loss(g_tilde: torch.Tensor, g_clean: torch.Tensor, tau:
 def energy_mse_loss(pred_energy: torch.Tensor, target_energy: torch.Tensor) -> torch.Tensor:
     """Eq. (16): simple MSE between predicted and reference molecular energy.
     Applied to the CLEAN branch only (caller's responsibility, see model.py)."""
-    return F.mse_loss(pred_energy.view(-1), target_energy.view(-1))
+    pred_energy = pred_energy.view(-1)
+    target_energy = target_energy.view(-1)
+    if pred_energy.shape != target_energy.shape:
+        raise ValueError(
+            "predicted and target energy must contain the same number of graphs, "
+            f"got {pred_energy.numel()} and {target_energy.numel()}"
+        )
+    return F.mse_loss(pred_energy, target_energy)
 
 
 @dataclass

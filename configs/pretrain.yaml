@@ -2,9 +2,9 @@ seed: 42
 device: cpu
 
 data:
-  # Path to a .pt file produced by scripts/prepare_data.py (list[dict] with
-  # keys z[int64 N], pos[float32 N,3]). If null, falls back to the synthetic
-  # dataset for smoke-testing the training loop end to end.
+  # Path to a validated .pt file containing list[dict(z, pos, y)]. See
+  # docs/data.md. With the default beta=10 energy loss, y is required. If
+  # null, falls back to the synthetic dataset for an end-to-end smoke test.
   path: null
   num_synthetic_samples: 512
   batch_size: 32

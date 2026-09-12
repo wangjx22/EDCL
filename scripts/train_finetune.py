@@ -19,23 +19,19 @@ from torch.utils.data import DataLoader, random_split
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from edcl import EDCLFinetuneModel
-from edcl.data import SyntheticMoleculeDataset, collate_molecules
+from edcl.data import SyntheticMoleculeDataset, collate_molecules, load_pt_dataset
 
 
 def build_dataset(cfg: dict):
     path = cfg["data"].get("path")
+    num_targets = cfg["model"].get("num_targets", 1)
     if path:
-        samples = torch.load(path)
-        class _Wrapped(torch.utils.data.Dataset):
-            def __len__(self):
-                return len(samples)
-
-            def __getitem__(self, idx):
-                return samples[idx]
-        return _Wrapped()
+        return load_pt_dataset(
+            path, require_y=True, expected_num_targets=num_targets
+        )
     return SyntheticMoleculeDataset(
         num_samples=cfg["data"].get("num_synthetic_samples", 256),
-        num_targets=cfg["data"].get("num_targets", 1),
+        num_targets=num_targets,
     )
 
 
@@ -51,8 +47,12 @@ def main():
     device = torch.device(cfg.get("device", "cpu"))
 
     dataset = build_dataset(cfg)
-    val_frac = cfg["data"].get("val_fraction", 0.1)
-    n_val = max(1, int(len(dataset) * val_frac))
+    val_frac = float(cfg["data"].get("val_fraction", 0.1))
+    if len(dataset) < 2:
+        raise ValueError("fine-tuning requires at least 2 samples for a non-empty train/validation split")
+    if not 0.0 < val_frac < 1.0:
+        raise ValueError("data.val_fraction must be strictly between 0 and 1")
+    n_val = min(len(dataset) - 1, max(1, int(len(dataset) * val_frac)))
     n_train = len(dataset) - n_val
     train_ds, val_ds = random_split(dataset, [n_train, n_val])
 
@@ -61,14 +61,19 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False, collate_fn=collate_molecules)
 
     num_targets = cfg["model"].get("num_targets", 1)
+    head_hidden = cfg["model"].get("hidden", 128)
     ckpt = cfg.get("pretrained_ckpt")
     if ckpt and os.path.exists(ckpt):
-        model = EDCLFinetuneModel.from_pretrained(ckpt, num_targets=num_targets)
+        model = EDCLFinetuneModel.from_pretrained(
+            ckpt, num_targets=num_targets, hidden=head_hidden
+        )
         print(f"loaded pretrained encoder from {ckpt}")
     else:
         from edcl.backbone import EquivariantEncoder
         encoder = EquivariantEncoder()
-        model = EDCLFinetuneModel(encoder, num_targets=num_targets)
+        model = EDCLFinetuneModel(
+            encoder, num_targets=num_targets, hidden=head_hidden
+        )
         print("WARNING: no pretrained checkpoint found, training encoder from scratch")
     model = model.to(device)
 

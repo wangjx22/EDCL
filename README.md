@@ -1,9 +1,8 @@
 # EDCL — Equivariant Denoising Contrastive Learning (Rewrite)
 
 A from-scratch, dependency-light reimplementation of **EDCL**, following the
-methodology in the accompanying paper (`EDCL_work/paper.txt`). This rewrite
-replaces the original messy repository (`EDCL_work/orig_repo/`) with a small,
-fully-tested `src/edcl` package plus CLI training scripts.
+published methodology. This rewrite replaces the legacy experiment code with
+a small, fully-tested `src/edcl` package plus CLI training scripts.
 
 > Original repo: https://github.com/wangjx22/EDCL
 
@@ -45,8 +44,9 @@ python scripts/train_finetune.py --config configs/finetune.yaml
 
 Both configs default to a synthetic in-memory dataset (`data.path: null`) so
 the full pipeline is runnable immediately for smoke-testing. To use real
-data, point `data.path` at a `.pt` file containing `list[dict(z, pos[, y])]`
-(see `src/edcl/data.py` docstring) and set the path in the YAML config.
+data, point `data.path` at a validated `.pt` file containing
+`list[dict(z, pos[, y])]`; see `docs/data.md` for the exact contract and when
+energy labels are required.
 
 ## Run tests
 
@@ -54,11 +54,11 @@ data, point `data.path` at a `.pt` file containing `list[dict(z, pos[, y])]`
 python -m pytest -q
 ```
 
-16 tests covering: numeric SE(3)/E(3) equivariance of the encoder and
+22 tests covering: numeric SE(3)/E(3) equivariance of the encoder and
 denoising head, all four loss terms (denoise NLL, KL prior, InfoNCE
 contrastive, energy MSE) against hand-derived reference values, the r_min
-validity-constrained perturbation sampler, and an end-to-end forward+backward
-smoke test of the full dual-branch model.
+validity-constrained perturbation sampler, strict serialized-data validation,
+and end-to-end forward+backward smoke tests.
 
 ## Repository layout
 
@@ -72,11 +72,11 @@ src/edcl/
   losses.py           denoising NLL, KL prior, InfoNCE contrastive, energy MSE, EDCLLossWeights
   model.py            EDCLPretrainModel: dual-branch forward + combined loss (Eq. 17)
   finetune.py         EDCLFinetuneModel: pretrained encoder + task head
-  data.py             MoleculeBatch, collate_molecules, SyntheticMoleculeDataset
-tests/                pytest suite (16 tests, all passing)
+  data.py             validated .pt loading, MoleculeBatch, collation, synthetic fixture
+tests/                pytest suite (21 tests)
 scripts/              train_pretrain.py, train_finetune.py (CLI)
 configs/              pretrain.yaml, finetune.yaml
-docs/paper_equations.md   equation -> code traceability table
+docs/                 data contract and paper equation traceability
 ```
 
 ## Equation → code map
@@ -91,7 +91,7 @@ See `docs/paper_equations.md` for the full table. Summary:
 | Denoising NLL loss (weighted MSE / sigma_i^2, no log term) | `losses.denoising_nll_loss` |
 | KL(sigma prior) regularizer (closed-form Gaussian KL) | `losses.kl_prior_loss` |
 | Contrastive InfoNCE loss (asymmetric, noisy->clean) | `losses.info_nce_contrastive_loss` |
-| Energy auxiliary loss (supervised MSE vs. label, clean branch only; 0 if no label) | `losses.energy_mse_loss` |
+| Energy auxiliary loss (supervised MSE vs. label, clean branch only; labels required when beta is non-zero) | `losses.energy_mse_loss` |
 | Combined objective (Eq. 17) | `losses.total_edcl_loss`, `losses.EDCLLossWeights` (alpha=0.1, beta=10, lambda=1) |
 | Fine-tuning protocol | `finetune.EDCLFinetuneModel` |
 
@@ -121,11 +121,11 @@ See `docs/paper_equations.md` for the full table. Summary:
    sampled Gaussian noise unconditionally. This rewrite adds
    `validity.sample_valid_perturbation`, a bounded rejection/resample loop
    (tested in `tests/test_validity.py`).
-5. **Synthetic dataset fallback**: real pretraining datasets (PCQM4Mv2/OC20/
-   QM9-scale) are not available in this sandboxed environment; the CLI
-   scripts fall back to a synthetic random-molecule dataset so the full
-   pipeline is exercised end-to-end (forward, backward, checkpointing).
-   Swap in real data via `data.path` pointing at a prepared `.pt` file.
+5. **Synthetic dataset fallback**: the default configs use a deterministic
+   synthetic random-molecule fixture so the full pipeline can be exercised
+   end-to-end (forward, backward, checkpointing) without a data download.
+   It is not a scientific benchmark. Swap in real data via `data.path` using
+   the validated format in `docs/data.md`.
 
 ## Checkpoints produced
 

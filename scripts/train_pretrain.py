@@ -21,20 +21,18 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from edcl import EDCLPretrainModel, EDCLConfig, EDCLLossWeights
-from edcl.data import SyntheticMoleculeDataset, collate_molecules
+from edcl.data import SyntheticMoleculeDataset, collate_molecules, load_pt_dataset
 
 
 def build_dataset(cfg: dict):
     path = cfg["data"].get("path")
     if path:
-        samples = torch.load(path)
-        class _Wrapped(torch.utils.data.Dataset):
-            def __len__(self):
-                return len(samples)
-
-            def __getitem__(self, idx):
-                return samples[idx]
-        return _Wrapped()
+        require_energy = float(cfg.get("weights", {}).get("beta", 10.0)) != 0.0
+        return load_pt_dataset(
+            path,
+            require_y=require_energy,
+            expected_num_targets=1 if require_energy else None,
+        )
     return SyntheticMoleculeDataset(
         num_samples=cfg["data"].get("num_synthetic_samples", 512),
     )

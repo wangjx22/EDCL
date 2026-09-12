@@ -1,7 +1,7 @@
 # Paper Equations → Code Traceability
 
-Source: `EDCL_work/paper.txt`. Each row lists the paper concept, its role,
-and the exact function/class implementing it.
+This table maps concepts from the EDCL paper to the exact function or class
+implementing them.
 
 ## 1. Encoder
 
@@ -65,3 +65,4 @@ and the exact function/class implementing it.
 | `tests/test_losses.py` | Each loss term against hand-derived reference values (e.g. NLL reduces to Gaussian NLL for constant sigma; KL matches closed-form N(0,s1^2)\|\|N(0,s2^2); InfoNCE matches manual softmax-cross-entropy; energy loss matches MSE) |
 | `tests/test_validity.py` | Perturbation sampler never returns configurations violating `r_min`; falls back safely if unsatisfiable within retry budget |
 | `tests/test_model_smoke.py` | Full forward+backward pass produces finite loss and non-null gradients for all trainable parameters (except the identity-shortcut branch of ProjectionHead, documented as expected) |
+| `tests/test_data_contract.py` | Serialized-data validation, strict collation, and the conditional energy-target contract |

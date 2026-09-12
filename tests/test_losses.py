@@ -1,6 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import pytest
 import torch
 from edcl.losses import (
     denoising_nll_loss, kl_prior_loss, info_nce_contrastive_loss,
@@ -54,6 +55,11 @@ def test_energy_mse():
     assert energy_mse_loss(pred, target).item() < 1e-6
     pred2 = torch.tensor([0.0, 0.0, 0.0])
     assert energy_mse_loss(pred2, target).item() > 1.0
+
+
+def test_energy_mse_rejects_shape_mismatch_before_broadcasting():
+    with pytest.raises(ValueError, match="same number of graphs"):
+        energy_mse_loss(torch.zeros(2), torch.zeros(4))
 
 
 def test_total_loss_combines_with_paper_weights():

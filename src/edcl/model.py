@@ -76,7 +76,13 @@ class EDCLPretrainModel(nn.Module):
         num_graphs = int(batch.max().item()) + 1
         pred_energy = scatter_mean(pred_energy_atom, batch, dim_size=num_graphs).view(-1)
         if target_energy is None:
-            l_energy = torch.zeros((), device=pos.device)
+            if cfg.weights.beta != 0:
+                raise ValueError(
+                    "target_energy is required when the energy-loss weight beta is non-zero"
+                )
+            # Keep the beta=0 ablation differentiable without pretending that
+            # an unavailable target contributes an observed zero loss.
+            l_energy = pred_energy.sum() * 0.0
         else:
             l_energy = energy_mse_loss(pred_energy, target_energy)
 

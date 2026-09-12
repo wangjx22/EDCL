@@ -1,17 +1,15 @@
 """
-Minimal molecular graph batch container + collation, and a synthetic dataset
-used for unit tests / smoke tests when no real 3D dataset (PCQM4Mv2 / OC20 /
-QM9) is available locally.
+Molecular graph batching and dataset utilities.
 
-Real datasets: point ``EDCLPretrainDataset``/``EDCLFinetuneDataset`` at a
-``.pt`` file produced by ``scripts/prepare_data.py`` (see ``docs/data.md``);
-this module does not itself perform any network download, per the project
-convention of keeping data acquisition out of library code.
+Real datasets are loaded from a validated ``.pt`` file; see ``docs/data.md``.
+``SyntheticMoleculeDataset`` is intentionally only a deterministic smoke-test
+fixture and is not a scientific benchmark dataset.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from os import PathLike
+from typing import List, Optional, Sequence, Union
 
 import torch
 from torch.utils.data import Dataset
@@ -56,22 +54,111 @@ class MoleculeBatch:
         )
 
 
-def collate_molecules(examples: List[dict]) -> MoleculeBatch:
-    """Collate a list of ``{"z": [n], "pos": [n,3], "y": [t]?}`` dicts into a MoleculeBatch."""
+def validate_sample(
+    sample: dict,
+    *,
+    require_y: bool = False,
+    expected_num_targets: Optional[int] = None,
+    index: Optional[int] = None,
+) -> None:
+    """Validate one serialized molecule and raise an actionable error."""
+    where = f"sample {index}" if index is not None else "sample"
+    if not isinstance(sample, dict):
+        raise TypeError(f"{where} must be a dict, got {type(sample).__name__}")
+    missing = {"z", "pos"} - sample.keys()
+    if missing:
+        raise ValueError(f"{where} is missing required key(s): {sorted(missing)}")
+
+    z, pos = sample["z"], sample["pos"]
+    if not isinstance(z, torch.Tensor) or not isinstance(pos, torch.Tensor):
+        raise TypeError(f"{where} keys 'z' and 'pos' must be torch tensors")
+    if z.dtype != torch.long or z.ndim != 1:
+        raise ValueError(f"{where}['z'] must have dtype torch.long and shape [N]")
+    if not pos.is_floating_point() or pos.ndim != 2 or pos.shape[1] != 3:
+        raise ValueError(f"{where}['pos'] must be floating point with shape [N, 3]")
+    if z.shape[0] == 0:
+        raise ValueError(f"{where} must contain at least one atom")
+    if pos.shape[0] != z.shape[0]:
+        raise ValueError(
+            f"{where} has {z.shape[0]} atomic numbers but {pos.shape[0]} positions"
+        )
+    if (z <= 0).any():
+        raise ValueError(f"{where}['z'] must contain positive atomic numbers")
+    if not torch.isfinite(pos).all():
+        raise ValueError(f"{where}['pos'] contains NaN or infinity")
+
+    y = sample.get("y")
+    if require_y and y is None:
+        raise ValueError(f"{where} requires a non-null 'y' target")
+    if y is not None:
+        if not isinstance(y, torch.Tensor) or not y.is_floating_point():
+            raise TypeError(f"{where}['y'] must be a floating-point torch tensor")
+        if y.ndim > 1:
+            raise ValueError(f"{where}['y'] must be a scalar or one-dimensional target vector")
+        if y.numel() == 0:
+            raise ValueError(f"{where}['y'] must contain at least one target")
+        if expected_num_targets is not None and y.numel() != expected_num_targets:
+            raise ValueError(
+                f"{where}['y'] must contain exactly {expected_num_targets} target(s), "
+                f"got {y.numel()}"
+            )
+        if not torch.isfinite(y).all():
+            raise ValueError(f"{where}['y'] contains NaN or infinity")
+
+
+def load_pt_dataset(
+    path: Union[str, PathLike],
+    *,
+    require_y: bool = False,
+    expected_num_targets: Optional[int] = None,
+) -> List[dict]:
+    """Load and eagerly validate the documented list-of-dicts ``.pt`` format."""
+    samples = torch.load(path, map_location="cpu", weights_only=True)
+    if not isinstance(samples, (list, tuple)):
+        raise TypeError("dataset file must contain a list or tuple of sample dicts")
+    if len(samples) == 0:
+        raise ValueError("dataset file contains no samples")
+    samples = list(samples)
+    for index, sample in enumerate(samples):
+        validate_sample(
+            sample,
+            require_y=require_y,
+            expected_num_targets=expected_num_targets,
+            index=index,
+        )
+    return samples
+
+
+def collate_molecules(examples: Sequence[dict]) -> MoleculeBatch:
+    """Collate validated molecule dicts without silently discarding labels."""
+    if not examples:
+        raise ValueError("cannot collate an empty batch")
+    for index, example in enumerate(examples):
+        validate_sample(example, index=index)
+
+    label_flags = [example.get("y") is not None for example in examples]
+    if any(label_flags) and not all(label_flags):
+        raise ValueError("a batch cannot mix labeled and unlabeled samples")
+
     zs, poss, batches, ys = [], [], [], []
-    has_y = all(("y" in e and e["y"] is not None) for e in examples)
-    for gidx, ex in enumerate(examples):
-        n = ex["z"].shape[0]
-        zs.append(ex["z"])
-        poss.append(ex["pos"])
-        batches.append(torch.full((n,), gidx, dtype=torch.long))
-        if has_y:
-            ys.append(ex["y"].view(1, -1))
+    target_width = None
+    for graph_index, example in enumerate(examples):
+        n_atoms = example["z"].shape[0]
+        zs.append(example["z"])
+        poss.append(example["pos"])
+        batches.append(torch.full((n_atoms,), graph_index, dtype=torch.long))
+        if all(label_flags):
+            y = example["y"].reshape(1, -1)
+            if target_width is None:
+                target_width = y.shape[1]
+            elif y.shape[1] != target_width:
+                raise ValueError("all labels in a batch must have the same number of targets")
+            ys.append(y)
     return MoleculeBatch(
         z=torch.cat(zs, dim=0),
         pos=torch.cat(poss, dim=0),
         batch=torch.cat(batches, dim=0),
-        y=torch.cat(ys, dim=0) if has_y else None,
+        y=torch.cat(ys, dim=0) if all(label_flags) else None,
     )
 
 
